@@ -1,99 +1,106 @@
-# Wine Clustering: Finding Wine Styles in 130k Tasting Notes
+# Wine Clustering: Finding Wine Styles without Labels
 
-![Wine taste-alike finder](assets/app_gradio.png)
+![Wine style finder app](assets/app_gradio.png)
 
-Unsupervised learning | Text clustering | TF-IDF | LSA (truncated SVD) | k-means | Ward hierarchical | Gaussian mixture | DBSCAN | Silhouette | Bootstrap stability | NMI / ARI | Recommendation | Gradio
+Unsupervised learning | Clustering | k-means | Ward hierarchical | Gaussian mixture | DBSCAN | Yeo-Johnson | PCA | t-SNE | Silhouette | Bootstrap stability | Adjusted Rand index | Gradio
 
 ![What this project builds](assets/wine_overview.png)
 
 ## Objective
 
-- **Problem** → shops and apps sort wine by grape and country, but people buy by taste ("crisp and citrusy", "big and oaky"), and a list of 700 grape names does not help them choose
-- **Why this repo** → group 120k tasting notes into taste styles from the words alone (grape and country names removed), check how stable and how "grape-driven" the styles are, and find good value inside each style
-- **Real-world use** → taste-based shelves and menus, "tastes like" suggestions across grapes and countries, and a value pick under $20 for every style
+- **Problem** → a shop or distributor has lab sheets for its wines but no agreed "style" labels, so shelves, menus and "if you liked this" suggestions are guesswork
+- **Why this repo** → group the wines from their chemistry alone, check that the groups are stable, describe each group in plain words, and only then compare with the real grape varieties
+- **Real-world use** → shelf and menu categories, "similar wines" suggestions, and a flag for wines that fit no style (a lab re-check or a special shelf)
 
 ## Highlights
 
-**Question:** what taste styles hide in 120k tasting notes?
+**Question:** how many styles are hiding in 178 wines, and what are they?
 
-**Answer:** eight usable shelves. The biggest are dark-fruit reds and citrus whites; oaky wines, light-and-fresh wines and medium-bodied wines follow. There is no "natural" number of styles (silhouette 0.05-0.07 for every k), so 8 is a shelf-count choice.
+**Answer:** three, and each can be described in one line. Four selection rules (silhouette, Calinski-Harabasz, Davies-Bouldin, mixture BIC) all pick k = 3.
 
-| Style (strongest words) | Wines | Median price | Typical grape |
+| Style (k-means) | Wines | In plain words | Key numbers |
 |---|---|---|---|
-| cherry, fruit, blackberry (dark-fruit reds) | 32,504 | $35 | Pinot Noir, Cabernet, Syrah, Zinfandel |
-| citrus, peach, lemon (crisp whites) | 28,542 | $20 | Chardonnay, Riesling, Sauvignon Blanc |
-| oak, fruit, french (oaky) | 11,066 | $35 | Cabernet Sauvignon, Chardonnay |
-| light, fresh, fruit | 8,826 | $20 | Pinot Noir, Rosé |
-| medium, bodied, weight | 4,562 | $22 | Pinot Noir |
+| A | 64 | light | 12.3 % alcohol, pale colour 3.0, proline 505 |
+| B | 52 | deep, low in phenols | colour 7.2, brownish hue 0.70, flavanoids 0.82 |
+| C | 62 | full-bodied | 13.7 % alcohol, flavanoids 3.0, proline 1,100 |
 
-![styles](assets/04_styles.png)
+![profiles](assets/08_profiles.png)
 
-**Question:** are the styles just the grapes again?
+**Question:** are these real groups or an artefact of the method?
 
-**Answer:** no, and the surprise is who wrote the note. Style follows the critic (NMI 0.31) more than the grape (NMI 0.22). Three of the eight styles are mostly one writer's vocabulary: "fruits, ripe, acidity" is 94 % Roger Voss, "tannins, cherry, alongside" 96 % Kerin O'Keefe, "berry, plum, herbal" 79 % Michael Schachner. Grapes still matter: 79 % of Rieslings land in the citrus whites, while Pinot Noir and Rosé spread over several styles.
+**Answer:** real for the model-based families, and the answer key agrees. k-means returns almost the same grouping on 100 bootstrap resamples (median ARI 0.97), and without ever seeing a label it puts 96.1 % of wines with their own grape variety; the Gaussian mixture reaches 97.8 %.
 
-![grape vs style](assets/05_grape_vs_style.png)
-
-**Question:** what does a better score cost, and is there value in every style?
-
-**Answer:** each extra point costs about 14 % more (median $16 at 85 points, $30 at 90, $75 at 95), yet 35.6 % of wines cost $20 or less and every style has 92-96-point bottles at that price.
-
-| Style | Example under $20 | Points | Price |
+| Family | Silhouette | Stability (median ARI) | Wines with their own grape |
 |---|---|---|---|
-| dark-fruit reds | Rulo 2007 Syrah (Columbia Valley) | 96 | $20 |
-| crisp whites | Dunham 2010 Lewis Estate Riesling (Columbia Valley) | 95 | $20 |
-| oaky | Joseph Carr 2009 Dijon Clone Chardonnay (Sonoma) | 94 | $18 |
+| k-means | 0.301 | 0.97 | 96.1 % |
+| Gaussian mixture | 0.297 | 0.91 | **97.8 %** |
+| Ward hierarchical | 0.290 | 0.83 | 92.1 % |
+| DBSCAN | one crowd + 8 noise | 0.00 | 37.6 % |
 
-![points and price](assets/01_points_price.png)
+![families](assets/05_families.png)
+
+**Question:** what is the most common mistake when clustering this kind of data?
+
+**Answer:** forgetting to put the measurements on one scale. Proline is measured in hundreds of mg/L and holds 99.8 % of the raw variance, so k-means on the raw numbers is exactly "k-means on proline" (ARI 1.00). After a Yeo-Johnson transform every measurement has a say.
 
 ## [1/7] Data
 
-- **Dataset** → [Wine Reviews](https://www.kaggle.com/datasets/zynicide/wine-reviews) (Wine Enthusiast) · `winemag-data-130k-v2.csv` · 129,971 reviews (not stored in this repository)
-- **Cleaning** → 9,983 repeated reviews removed → 119,987 wines; price missing for 7 %, critic for 21 %
-- **Selection** → only wines scored 80-100 are published (median 88), so "bad" wines are absent
+- **Dataset** → [Wine Dataset for Clustering](https://www.kaggle.com/datasets/harrywang/wine-dataset-for-clustering) · 178 wines × 13 lab measurements, no missing values (not stored in this repository)
+- **Answer key** → the same 178 wines, in the same order, ship with scikit-learn (`load_wine`) together with their grape variety (59 / 71 / 48); used only in the final check
+- **Health** → mild skew (magnesium 1.09, malic acid 1.03); 21 IQR outliers are real wines and are kept
+- **Redundancy** → total phenols, flavanoids, OD280 and proanthocyanins move together (Spearman 0.67-0.88)
+
+![correlation](assets/02_correlation.png)
 
 ## [2/7] Run on Kaggle
 
 - **Import** → Create → Import Notebook → upload `wine_clustering.ipynb`
-- **Input** → dataset `zynicide/wine-reviews` (default path `/kaggle/input/datasets/zynicide/wine-reviews`, searched under `/kaggle/input` if it moves)
-- **Accelerator** → none (CPU, about 5 minutes)
+- **Input** → dataset `harrywang/wine-dataset-for-clustering` (default path `/kaggle/input/datasets/harrywang/wine-dataset-for-clustering`, searched under `/kaggle/input` if it moves)
+- **Accelerator** → none (CPU, under a minute)
 - **Settings** → top cell; `SAVE_FIGURES = False`, `LAUNCH_APP = False` → nothing is written, no app is started
 
-## [3/7] Blind the notes, then turn words into numbers
+## [3/7] Scaling and PCA
 
-- **Blind** → 37 % of notes name their own grape; 1,006 grape, country and region words are removed so styles come from taste words (median 18 per note)
-- **TF-IDF + LSA** → 20,000 words and phrases → 100 taste directions; the first splits red (cherry, tannins, blackberry) from white (crisp, citrus); the next ones are ripeness and oak
+- **Yeo-Johnson** → each measurement made close to normal, then mean 0 and std 1; mean |skewness| 0.43 → 0.04
+- **PCA** → two components keep 56 % of the variance (phenols on PC1, colour / alcohol / proline on PC2); five keep 80 %
 
-![LSA map](assets/02_lsa_map.png)
+![pca](assets/03_pca.png)
 
-## [4/7] How many styles and which family
+## [4/7] How many groups and which family
 
-![choose k](assets/03_choose_k.png)
+- **k = 2 … 10** → every rule peaks at k = 3
+
+![choose k](assets/04_choose_k.png)
+
+- **Four families** → centroid, hierarchical, distribution, density; one model each
 
 ![clustering families](assets/clustering_categorization.png)
 
-- **k-means wins** → silhouette 0.059 vs Gaussian mixture 0.043, Ward 0.019; DBSCAN finds 2 groups and 9 % noise (notes have no empty gaps)
-- **Stability** → median ARI 0.41 over 30 resamples: the big styles return every time, borders between small ones move
+- **Stability** → fit on 100 bootstrap resamples, compare with the full-data grouping
 
-## [5/7] Taste-alike finder
+![stability](assets/07_stability.png)
 
-- "Crisp and zesty with lime, green apple and a flinty, mineral finish" → citrus whites; nearest wines: a German Riesling, a $16 New Zealand Sauvignon Blanc, a $14 Spanish Verdejo, a $14 Cava
-- the finder works across grapes and countries, with a price cap and an "other grapes only" switch
+## [5/7] Using the groups
+
+- **New wine** → transform, then the Gaussian mixture gives P(style)
+- **Similar wines** → the 5 nearest wines in the transformed space
+- **Odd wines** → the lowest likelihood under the mixture; the oddest include the maximum flavanoids (5.08) and the maximum colour intensity (13.0)
 
 ## [6/7] App
 
-- **Run locally** → `pip install -r requirements.txt` → put `winemag-data-130k-v2.csv` in `./data` (or set `WINE_REVIEWS_CSV`) → `python app.py`
-- **First start** → builds the index in about 35 seconds and caches it in `./cache` (git-ignored)
+- **Run locally** → `pip install -r requirements.txt` → `python app.py`
+- **Data** → none needed: the model is rebuilt at start-up from scikit-learn's copy of the wines (about 2 seconds)
+- **Output** → style probabilities, how the wine differs from its style centre, the 5 most similar wines, a warning for unusual wines
 
 ## [7/7] Next steps
 
-- **Normalise each critic** → remove writer habits (per-critic TF-IDF or a critic-adversarial embedding) so styles are about the wine, not the writer
-- **Sentence embeddings** → compare LSA with a modern text encoder for the taste-alike search
-- **Price-aware recommendations** → "like this, but cheaper" ranked by similarity per dollar
+- **Prices and taste-panel scores** → turn styles into shelves with price bands and tasting notes
+- **More wines** → the larger UCI wine-quality data (6,497 red and white wines) to test whether the styles generalise
+- **Feature selection** → one measurement per correlated family, to see if 6-7 measurements suffice
 
 | Path | Content |
 |---|---|
 | `wine_clustering.ipynb` | full notebook (Kaggle-ready) |
-| `app.py`, `requirements.txt` | Gradio taste-alike finder |
+| `app.py`, `requirements.txt` | Gradio style finder |
 | `assets/` | figures and editable draw.io diagrams |
-| `arch/` | earlier versions: lab-chemistry clustering of 178 wines (`wine_clustering_chemistry.ipynb`) and the first group project |
+| `arch/` | first version (a university group project with Box-Cox / Yeo-Johnson k-means) and a text-clustering variant on 130k Wine Enthusiast reviews |
