@@ -1,107 +1,111 @@
-"""Wine style finder (Gradio).
+"""Wine taste-alike finder (Gradio).
 
-Move the 13 lab-measurement sliders → the app returns the wine's style (with probabilities), how it differs from the
-style centre, and the 5 most similar wines. The model is rebuilt at start-up exactly as in the notebook:
-Yeo-Johnson transform → k-means (k = 3) for the styles, Gaussian mixture for the probabilities.
-The data ships with scikit-learn (`load_wine`, the same 178 wines as the Kaggle CSV), so nothing is downloaded.
+Describe a wine you like in your own words → its taste style and the most similar wines from 120k Wine Enthusiast
+reviews, optionally under a price cap and from other grapes. The model is rebuilt exactly as in the notebook:
+blind the notes (grape / country words removed) → TF-IDF → LSA (100) → k-means (8 styles).
+
+Data (not stored here): WINE_REVIEWS_CSV, else ./data/winemag-data-130k-v2.csv
+(Kaggle dataset zynicide/wine-reviews). The fitted index is cached in ./cache after the first start (about 2 minutes).
 
     pip install -r requirements.txt
     python app.py
 
-Optional: WINE_DEMO=<row> fills the sliders with that wine and runs it on page load (used for the README screenshot).
+Optional: WINE_DEMO=1 runs the example note on page load (used for the README screenshot).
 """
 import os
+import re
+from pathlib import Path
 
 import gradio as gr
-import matplotlib
-
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
-from sklearn.datasets import load_wine
-from sklearn.mixture import GaussianMixture
+from sklearn.decomposition import TruncatedSVD
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
-from sklearn.preprocessing import PowerTransformer, StandardScaler
+from sklearn.preprocessing import normalize
 
-SEED, K = 42, 3
-FEATURES = ['Alcohol', 'Malic_Acid', 'Ash', 'Ash_Alcanity', 'Magnesium', 'Total_Phenols', 'Flavanoids',
-            'Nonflavanoid_Phenols', 'Proanthocyanins', 'Color_Intensity', 'Hue', 'OD280', 'Proline']
-wine = pd.DataFrame(load_wine().data, columns=FEATURES)
-
-# ---------------------------------------------------------------- model (same steps as the notebook)
-transformer = PowerTransformer(method='yeo-johnson').fit(wine)
-X = transformer.transform(wine)
-groups = KMeans(K, n_init=50, random_state=SEED).fit_predict(X)
-scaler = StandardScaler().fit(wine)
-z = pd.DataFrame(scaler.transform(wine), columns=FEATURES)
-centres_z = z.groupby(groups).mean()
+HERE = Path(__file__).resolve().parent
+SEED, K, MAX_FEATURES, N_COMPONENTS = 42, 8, 20000, 100
+CSV = Path(os.environ.get('WINE_REVIEWS_CSV', HERE / 'data' / 'winemag-data-130k-v2.csv'))
+CACHE = HERE / 'cache' / 'wine_index.joblib'
+GENERIC = {'wine', 'wines', 'drink', 'drinks', 'flavors', 'flavor', 'aromas', 'aroma', 'finish', 'palate', 'nose', 'notes',
+           'note', 'offers', 'shows', 'bottle', 'bottling', 'vintage', 'years', 'year', 'now', 'just', 'like', 'made', 'make',
+           'feels', 'gives', 'hint', 'hints', 'touch', 'bit', 'quite', 'good', 'nice', 'well', 'mouth', 'mouthfeel', 'character'}
+TOKEN = re.compile(r'[a-z]+')
+EXAMPLE = 'Crisp and zesty with lime, green apple and a flinty, mineral finish.'
 
 
-def style_name(row):
-    top = row.abs().sort_values(ascending=False).index[:2]
-    return ' · '.join(f'{"high" if row[c] > 0 else "low"} {c.lower().replace("_", " ")}' for c in top)
+def name_tokens(series):
+    words = set()
+    for name in series.dropna().unique():
+        words |= {w for w in re.findall(r'[a-zà-ÿ]+', name.lower()) if len(w) > 2}
+    return words
 
 
-STYLE = {g: f'Style {chr(65 + i)}: {style_name(centres_z.loc[g])}' for i, g in enumerate(centres_z.index)}
-gmm = GaussianMixture(K, covariance_type='diag', n_init=10, random_state=SEED).fit(X)
-gmm_to_style = {g: pd.Series(groups[gmm.predict(X) == g]).mode().iloc[0] for g in range(K)}
-nn = NearestNeighbors(n_neighbors=5).fit(X)
+def build():
+    if not CSV.exists():
+        raise FileNotFoundError(f'(!) {CSV} not found: download Kaggle dataset zynicide/wine-reviews into ./data '
+                                'or set WINE_REVIEWS_CSV')
+    raw = pd.read_csv(CSV, index_col=0)
+    wine = raw[~raw.duplicated(['title', 'description'])].dropna(subset=['description', 'variety']).reset_index(drop=True)
+    stop = set(ENGLISH_STOP_WORDS) | GENERIC | name_tokens(wine['variety']) | name_tokens(wine['country']) | name_tokens(wine['province'])
+    clean = lambda t: ' '.join(w for w in TOKEN.findall(t.lower()) if w not in stop and len(w) > 2)
+    tfidf = TfidfVectorizer(max_features=MAX_FEATURES, ngram_range=(1, 2), min_df=5, sublinear_tf=True)
+    T = tfidf.fit_transform(wine['description'].map(clean))
+    svd = TruncatedSVD(N_COMPONENTS, random_state=SEED)
+    Z = normalize(svd.fit_transform(T))
+    kmeans = KMeans(K, n_init=10, random_state=SEED).fit(Z)
+    terms = np.array(tfidf.get_feature_names_out())
+    centre_terms = svd.inverse_transform(kmeans.cluster_centers_)
+    style = {g: 'S{}: {}'.format(g + 1, ', '.join([t for t in terms[np.argsort(centre_terms[g])[::-1]] if ' ' not in t][:3])) for g in range(K)}
+    table = wine[['title', 'variety', 'country', 'points', 'price']]
+    return {'stop': stop, 'tfidf': tfidf, 'svd': svd, 'kmeans': kmeans, 'Z': Z.astype(np.float32), 'style': style,
+            'labels': kmeans.labels_, 'table': table}
 
 
-# ---------------------------------------------------------------- app logic
-def find_style(*values):
-    row = pd.DataFrame([values], columns=FEATURES)
-    x = transformer.transform(row)
-    proba = pd.Series(gmm.predict_proba(x)[0], index=[STYLE[gmm_to_style[g]] for g in range(K)]).groupby(level=0).sum()
-    best = proba.idxmax()
-    g = next(k for k, v in STYLE.items() if v == best)
-    wz = pd.Series(scaler.transform(row)[0], index=FEATURES)
-    diff = (wz - centres_z.loc[g]).sort_values(key=abs, ascending=False)
-    unusual = gmm.score_samples(x)[0] < np.quantile(gmm.score_samples(X), 0.05)
-    text = (f'### {best}\n'
-            f'Probability {proba.max():.0%}. Most different from its style centre: '
-            + ', '.join(f'{c.lower().replace("_", " ")} ({"higher" if d > 0 else "lower"})' for c, d in diff.iloc[:3].items())
-            + ('\n\n(!) Unusual wine: less likely than 95 % of the known wines → worth a lab re-check.' if unusual else ''))
-    fig, ax = plt.subplots(figsize=(8, 4.2))
-    order = centres_z.loc[g].index
-    ax.barh(order, centres_z.loc[g], color='lightgrey', label=f'{best.split(":")[0]} centre')
-    ax.scatter(wz[order], order, color='black', zorder=3, label='this wine')
-    ax.axvline(0, color='grey', linewidth=0.8)
-    ax.set(xlabel='standard deviations from the average wine', title='This wine vs its style')
-    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=8, frameon=False)
-    fig.tight_layout()
-    dist, idx = nn.kneighbors(x)
-    similar = wine.iloc[idx[0]][['Alcohol', 'Flavanoids', 'Color_Intensity', 'Hue', 'Proline']].assign(
-        style=[STYLE[groups[i]].split(':')[0] for i in idx[0]], distance=dist[0].round(2)).reset_index(names='wine')
-    return proba.sort_values(ascending=False).to_dict(), text, fig, similar.round(2)
+if CACHE.exists():
+    IDX = joblib.load(CACHE)
+else:
+    IDX = build()
+    CACHE.parent.mkdir(exist_ok=True)
+    joblib.dump(IDX, CACHE)
+NN = NearestNeighbors(n_neighbors=200, metric='cosine').fit(IDX['Z'])
 
 
-sliders = [gr.Slider(float(wine[c].min()), float(wine[c].max()), value=float(wine[c].median()), label=c.replace('_', ' '))
-           for c in FEATURES]
-with gr.Blocks(title='Wine style finder') as demo:
-    gr.Markdown('# Wine Style Finder\nSet the 13 lab measurements of a wine → its style, how it differs, and the most similar wines.')
+def find(note, max_price, other_grapes_only):
+    words = ' '.join(w for w in TOKEN.findall(note.lower()) if w not in IDX['stop'] and len(w) > 2)
+    if not words:
+        return 'Describe the taste (fruit, acidity, oak, body …).', pd.DataFrame()
+    z = normalize(IDX['svd'].transform(IDX['tfidf'].transform([words])))
+    g = int(IDX['kmeans'].predict(z)[0])
+    dist, idx = NN.kneighbors(z)
+    hits = IDX['table'].iloc[idx[0]].assign(similarity=(1 - dist[0]).round(3), style=[IDX['style'][l].split(':')[0] for l in IDX['labels'][idx[0]]])
+    hits = hits[hits['price'].fillna(1e9) <= max_price]
+    if other_grapes_only and len(hits):
+        hits = hits[hits['variety'] != hits['variety'].iloc[0]]
+    share = (IDX['labels'] == g).mean()
+    text = f'### {IDX["style"][g]}\nThis note reads like **{share:.0%}** of the 120k reviewed wines. Words used: *{words}*'
+    hits = hits.assign(wine=hits['title'].str.slice(0, 48))[['points', 'price', 'similarity', 'style', 'variety', 'country', 'wine']]
+    return text, hits.head(8).reset_index(drop=True)
+
+
+with gr.Blocks(title='Wine taste-alike finder') as demo:
+    gr.Markdown('# Wine Taste-alike Finder\nDescribe a wine you like → its taste style and similar wines, from 120k Wine Enthusiast reviews.')
     with gr.Row():
         with gr.Column(scale=2):
-            with gr.Row():
-                with gr.Column():
-                    for s in sliders[:7]:
-                        s.render()
-                with gr.Column():
-                    for s in sliders[7:]:
-                        s.render()
-            btn = gr.Button('Find style', variant='primary')
+            note = gr.Textbox(lines=4, value=EXAMPLE, label='Describe a wine you like')
+            price = gr.Slider(5, 200, value=30, step=1, label='Maximum price ($)')
+            other = gr.Checkbox(label='Show other grapes only (discover something new)')
+            btn = gr.Button('Find wines', variant='primary')
         with gr.Column(scale=3):
-            label = gr.Label(num_top_classes=3, label='Style')
-            text = gr.Markdown()
-            plot = gr.Plot(show_label=False)
-            table = gr.Dataframe(label='5 most similar wines')
-    btn.click(find_style, inputs=sliders, outputs=[label, text, plot, table])
-    if os.environ.get('WINE_DEMO'):
-        demo_values = [float(v) for v in wine.iloc[int(os.environ['WINE_DEMO'])]]
-        cached = (*demo_values, *find_style(*demo_values))
-        demo.load(lambda: cached, outputs=[*sliders, label, text, plot, table])
+            style = gr.Markdown()
+            table = gr.Dataframe(label='Wines that taste alike')
+    btn.click(find, inputs=[note, price, other], outputs=[style, table])
+    if os.environ.get('WINE_DEMO') == '1':
+        cached = find(EXAMPLE, 30, False)
+        demo.load(lambda: cached, outputs=[style, table])
 
 if __name__ == '__main__':
     demo.launch()
