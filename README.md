@@ -1,10 +1,10 @@
 # Wine Clustering: Finding Wine Styles without Labels
 
-![Wine style finder app](assets/app_gradio.png)
+![Wine style finder app](assets/png/app_gradio.png)
 
 Unsupervised learning | Clustering | k-means | Ward hierarchical | Gaussian mixture | DBSCAN | Yeo-Johnson | PCA | t-SNE | Silhouette | Bootstrap stability | Adjusted Rand index | Gradio
 
-![What this project builds](assets/wine_overview.png)
+![What this project builds](assets/png/wine_overview.png)
 
 ## Objective
 
@@ -24,7 +24,7 @@ Unsupervised learning | Clustering | k-means | Ward hierarchical | Gaussian mixt
 | B | 52 | deep, low in phenols | colour 7.2, brownish hue 0.70, flavanoids 0.82 |
 | C | 62 | full-bodied | 13.7 % alcohol, flavanoids 3.0, proline 1,100 |
 
-![profiles](assets/08_profiles.png)
+![profiles](assets/png/08_profiles.png)
 
 **Question:** are these real groups or an artefact of the method?
 
@@ -37,7 +37,7 @@ Unsupervised learning | Clustering | k-means | Ward hierarchical | Gaussian mixt
 | Ward hierarchical | 0.290 | 0.83 | 92.1 % |
 | DBSCAN | one crowd + 8 noise | 0.00 | 37.6 % |
 
-![families](assets/05_families.png)
+![families](assets/png/05_families.png)
 
 **Question:** what is the most common mistake when clustering this kind of data?
 
@@ -50,7 +50,7 @@ Unsupervised learning | Clustering | k-means | Ward hierarchical | Gaussian mixt
 - **Health** → mild skew (magnesium 1.09, malic acid 1.03); 21 IQR outliers are real wines and are kept
 - **Redundancy** → total phenols, flavanoids, OD280 and proanthocyanins move together (Spearman 0.67-0.88)
 
-![correlation](assets/02_correlation.png)
+![correlation](assets/png/02_correlation.png)
 
 ## [2/7] Run on Kaggle
 
@@ -64,21 +64,21 @@ Unsupervised learning | Clustering | k-means | Ward hierarchical | Gaussian mixt
 - **Yeo-Johnson** → each measurement made close to normal, then mean 0 and std 1; mean |skewness| 0.43 → 0.04
 - **PCA** → two components keep 56 % of the variance (phenols on PC1, colour / alcohol / proline on PC2); five keep 80 %
 
-![pca](assets/03_pca.png)
+![pca](assets/png/03_pca.png)
 
 ## [4/7] How many groups and which family
 
 - **k = 2 … 10** → every rule peaks at k = 3
 
-![choose k](assets/04_choose_k.png)
+![choose k](assets/png/04_choose_k.png)
 
 - **Four families** → centroid, hierarchical, distribution, density; one model each
 
-![clustering families](assets/clustering_categorization.png)
+![clustering families](assets/png/clustering_categorization.png)
 
 - **Stability** → fit on 100 bootstrap resamples, compare with the full-data grouping
 
-![stability](assets/07_stability.png)
+![stability](assets/png/07_stability.png)
 
 ## [5/7] Using the groups
 
@@ -102,5 +102,5 @@ Unsupervised learning | Clustering | k-means | Ward hierarchical | Gaussian mixt
 |---|---|
 | `wine_clustering.ipynb` | full notebook (Kaggle-ready) |
 | `app.py`, `requirements.txt` | Gradio style finder |
-| `assets/` | figures and editable draw.io diagrams |
+| `assets/png/` · `assets/drawio/` | figures (PNG) · editable draw.io diagrams |
 | `arch/` | first version (a university group project with Box-Cox / Yeo-Johnson k-means) and a text-clustering variant on 130k Wine Enthusiast reviews |
